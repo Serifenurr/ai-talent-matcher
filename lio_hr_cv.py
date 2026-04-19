@@ -1,10 +1,3 @@
-"""
-Lio-HR-Agent — Ana modül.
-
-- CV yardımcıları: Word (paragraf + tablo), deneyim bölümü, sıkıştırma, yıl tahmini.
-- Buluta gönderme: ``python lio_hr_cv.py`` veya ``cv_isleme_ve_kaydet()`` —
-  ``cv_havuzu`` içindeki ``.docx`` dosyaları Groq metadata + vektör ile Pinecone'a yazılır.
-"""
 from __future__ import annotations
 
 import re
@@ -14,7 +7,6 @@ from typing import Iterable
 
 import docx
 
-# Deneyim bölümü başlıkları (satır içi eşleşme)
 _EXPERIENCE_HINTS = (
     "experience",
     "work experience",
@@ -29,7 +21,6 @@ _EXPERIENCE_HINTS = (
     "kariyer",
 )
 
-# Deneyim bölümü bitti sayılacak başlıklar
 _OTHER_SECTION_HINTS = (
     "education",
     "academic",
@@ -67,10 +58,12 @@ _YEAR_TO_PRESENT = re.compile(
     r"(present|now|current|ongoing|today|halen|devam|şu\s*an|bugün|günümüz)\b",
     re.IGNORECASE,
 )
-
+_PLUS_YEARS = re.compile(
+    r"\b(\d{1,2})\s*(\+|plus|yıl|year|sene|years)\b",
+    re.IGNORECASE,
+)
 
 def read_docx_full_text(file_path: str | Path) -> str:
-    """Paragraflar + tablolardaki metinleri satır satır birleştirir."""
     doc = docx.Document(str(file_path))
     lines: list[str] = []
     for p in doc.paragraphs:
@@ -86,13 +79,11 @@ def read_docx_full_text(file_path: str | Path) -> str:
                         lines.append(t)
     return "\n".join(lines)
 
-
 def _line_is_experience_header(line_lower: str) -> bool:
     s = line_lower.strip()
     if len(s) > 80:
         return False
     return any(h in s for h in _EXPERIENCE_HINTS)
-
 
 def _line_is_other_section_header(line_lower: str) -> bool:
     s = line_lower.strip()
@@ -100,12 +91,7 @@ def _line_is_other_section_header(line_lower: str) -> bool:
         return False
     return any(h in s for h in _OTHER_SECTION_HINTS)
 
-
 def extract_professional_experience(full_text: str) -> str:
-    """
-    Mümkünse 'Experience / İş deneyimi' altındaki metni döndürür;
-    aksi halde tüm metni kullanır (başlık bulunamazsa).
-    """
     lines = [ln.strip() for ln in full_text.splitlines() if ln.strip()]
     if not lines:
         return ""
@@ -126,9 +112,7 @@ def extract_professional_experience(full_text: str) -> str:
             break
     return "\n".join(lines[start:end]).strip()
 
-
 def compress_professional_text(text: str, max_chars: int = 2200) -> str:
-    """Gereksiz boşlukları sıkıştırır; embed için güvenli uzunlukta keser."""
     t = re.sub(r"\s+", " ", text).strip()
     if len(t) <= max_chars:
         return t
@@ -137,7 +121,6 @@ def compress_professional_text(text: str, max_chars: int = 2200) -> str:
     if cut > int(max_chars * 0.55):
         return t[: cut + 1].strip()
     return t.strip()
-
 
 def _parse_year_spans(text: str) -> list[tuple[int, int]]:
     spans: list[tuple[int, int]] = []
@@ -152,7 +135,6 @@ def _parse_year_spans(text: str) -> list[tuple[int, int]]:
         spans.append((a, y_now))
     return spans
 
-
 def _merge_spans(spans: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
     spans = sorted(spans)
     if not spans:
@@ -166,20 +148,21 @@ def _merge_spans(spans: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
             out.append((s, e))
     return out
 
-
 def estimate_years_experience(text: str) -> float:
-    """
-    Metindeki yıl aralıklarından (örtüşenleri birleştirerek) toplam takvim yılı tahmini.
-    Tarih bulunamazsa 0.0 (filtre için bilinmeyen = düşük değer).
-    """
     spans = _merge_spans(_parse_year_spans(text))
-    if not spans:
-        return 0.0
-    total = 0.0
+    total_from_spans = 0.0
     for s, e in spans:
-        total += max(0.0, float(e - s + 1))
-    return min(total, 45.0)
-
+        total_from_spans += max(0.0, float(e - s + 1))
+    
+    found_years = [total_from_spans]
+    for m in _PLUS_YEARS.finditer(text):
+        try:
+            found_years.append(float(m.group(1)))
+        except:
+            pass
+            
+    final_yrs = max(found_years) if found_years else 0.0
+    return min(final_yrs, 45.0)
 
 def build_embedding_text(
     doc_head: str,
@@ -187,24 +170,11 @@ def build_embedding_text(
     head_max: int = 450,
     exp_max: int = 2200,
 ) -> str:
-    """İsim/unvan bağlamı + sıkıştırılmış deneyim — semantic arama için birleşik metin."""
     head = compress_professional_text(doc_head, max_chars=head_max)
     exp = compress_professional_text(experience_compressed, max_chars=exp_max)
     return f"{head}\n\n{exp}".strip()
 
-
 def cv_isleme_ve_kaydet(cv_yolu: str = "cv_havuzu", index_name: str = "cv-index") -> None:
-    """
-    ``cv_yolu`` klasöründeki her ``.docx`` için sıra:
-
-    1. Tam CV metni (``read_docx_full_text``)
-    2. ``extract_metadata(metin)`` — Groq + tarih sezgiseli; ``experience_years`` Pinecone filtresi için
-    3. Terminalde agent çıktısı
-    4. ``model.encode(metin)`` — vektör arama pipeline'ı (tam metin embedding)
-    5. ``save_to_cloud(..., vector=vektor, metadata=...)`` — güncel upsert API
-
-    Pinecone konsolda: vektör sorgusu + filtre ``experience_years`` >= N (örn. 5).
-    """
     import os
 
     from dotenv import load_dotenv
@@ -225,26 +195,18 @@ def cv_isleme_ve_kaydet(cv_yolu: str = "cv_havuzu", index_name: str = "cv-index"
     if not pinecone_key:
         raise RuntimeError("PINECONE_API_KEY .env dosyasında tanımlı olmalı.")
 
-    print("Lio-HR-Agent: Model yükleniyor (birkaç saniye sürebilir)...")
     model = SentenceTransformer("all-MiniLM-L6-v2")
-    print("Pinecone'a bağlanılıyor...")
     pc = Pinecone(api_key=pinecone_key)
     index = pc.Index(index_name)
 
     cv_listesi = [f for f in os.listdir(cv_yolu) if f.endswith(".docx")]
-    print(
-        f"Toplam {len(cv_listesi)} adet CV bulundu ({cv_yolu}). "
-        "Profesyonel tecrübe sıkıştırılarak yükleniyor.\n"
-    )
 
     for dosya in cv_listesi:
-        print(f"İşleniyor: {dosya}")
         dosya_yolu = os.path.join(cv_yolu, dosya)
 
         metin = read_docx_full_text(dosya_yolu)
 
         meta = extract_metadata(metin)
-        print(f"Agent'ın bulduğu veriler: {meta}")
 
         vektor = model.encode(metin).tolist()
 
@@ -275,13 +237,6 @@ def cv_isleme_ve_kaydet(cv_yolu: str = "cv_havuzu", index_name: str = "cv-index"
             model=model,
             index=index,
         )
-        print(
-            f"  → {dosya}  |  experience_years={exp_years:.0f}  |  "
-            f"unvan={(meta.get('job_title') or '-')[:40]}"
-        )
-
-    print("\nİşlem tamam. CV'ler semantic arama + metadata filtreleri için Pinecone'da.")
-
 
 if __name__ == "__main__":
     cv_isleme_ve_kaydet()

@@ -3,7 +3,6 @@ import axios from 'axios';
 import { Search, Loader2, User, Briefcase, FileText, Bot, LogOut, CheckCircle2, Filter, ChevronDown, ChevronUp, UploadCloud, XCircle, CheckCircle, Trash2, Star, ClipboardList, X, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// Replace with empty string in production if served from same origin, or configured via Vite env
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
 import Login from './components/auth/Login';
@@ -12,7 +11,7 @@ import ShortlistView from './components/dashboard/Shortlist';
 function App() {
   const [token, setToken] = useState(localStorage.getItem('hr_token'));
 
-  const [currentView, setCurrentView] = useState('search'); // 'search' or 'shortlist'
+  const [currentView, setCurrentView] = useState('search');
 
   const [query, setQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -57,7 +56,6 @@ function App() {
       await axios.delete(`${API_BASE}/api/delete-cv/${candidateId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      // Remove from states
       if (results) {
         setResults({
           ...results,
@@ -101,7 +99,6 @@ function App() {
       });
       setUploadStatus({ type: 'success', msg: response.data.message });
       
-      // State Update for uploaded candidates
       if (response.data.uploaded) {
         const newIds = response.data.uploaded.map(c => c.id);
         setNewlyAddedIds(prev => [...prev, ...newIds]);
@@ -109,7 +106,6 @@ function App() {
         setResults(prev => {
           if (!prev) return { search_query: "Sisteme Yeni Eklenen Adaylar", min_years: 0, results: response.data.uploaded };
           
-          // Mevcut aramada zaten varsa ekleme, yoksa en başa ekle:
           const existingIds = new Set(prev.results.map(c => c.id));
           const toAdd = response.data.uploaded.filter(c => !existingIds.has(c.id));
           return { ...prev, results: [...toAdd, ...prev.results] };
@@ -124,8 +120,6 @@ function App() {
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
-      
-      // Clear status after 5s
       setTimeout(() => setUploadStatus(null), 5000);
     }
   };
@@ -217,7 +211,6 @@ function App() {
           />
         ) : (
           <>
-            {/* Upload CV Zone (Disabled for guests) */}
         {token !== 'guest' && (
         <div 
           className="upload-zone"
@@ -295,7 +288,6 @@ function App() {
             </button>
           </form>
           
-          {/* Quick Keywords Filter Panel */}
           <div style={{ marginTop: '1rem', background: 'var(--bg-surface-hover)', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)' }}>
             <div 
               style={{ padding: '0.8rem 1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }}

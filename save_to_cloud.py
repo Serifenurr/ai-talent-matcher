@@ -1,7 +1,3 @@
-"""
-Buluta kaydet: metin → 384 boyutlu vektör (all-MiniLM-L6-v2) + metadata → Pinecone upsert.
-Eski tuple API (id, vector, dict) yerine güncel sözlük formatı kullanılır.
-"""
 from __future__ import annotations
 
 import os
@@ -19,13 +15,11 @@ MODEL_NAME = "all-MiniLM-L6-v2"
 _default_model: SentenceTransformer | None = None
 _default_index: Any = None
 
-
 def _get_model() -> SentenceTransformer:
     global _default_model
     if _default_model is None:
         _default_model = SentenceTransformer(MODEL_NAME)
     return _default_model
-
 
 def _get_index():
     global _default_index
@@ -37,12 +31,16 @@ def _get_index():
         _default_index = pc.Index(INDEX_NAME)
     return _default_index
 
-
 def _pinecone_safe_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
-    """Pinecone yalnızca str, int, float, bool veya string listesi kabul eder; None atlanır."""
     out: dict[str, Any] = {}
     for k, v in (metadata or {}).items():
         if v is None:
+            continue
+        if k == "experience_years":
+            try:
+                out[k] = float(v)
+            except:
+                out[k] = 0.0
             continue
         if isinstance(v, list):
             out[k] = [str(x) for x in v if x is not None]
@@ -51,7 +49,6 @@ def _pinecone_safe_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         else:
             out[k] = str(v)
     return out
-
 
 def save_to_cloud(
     file_name: str,
@@ -62,16 +59,6 @@ def save_to_cloud(
     model: SentenceTransformer | None = None,
     index=None,
 ) -> None:
-    """
-    Metni 384 boyutlu vektöre çevirir; Pinecone'a id + vektör + metadata olarak yükler.
-
-    file_name: benzersiz vektör id (ör. dosya adından türetilmiş)
-    text: ``vector`` verilmezse embed için kullanılan metin
-    metadata: agent çıktısı (Pinecone konsolunda ``experience_years`` ile filtre)
-    vector: Önceden hesaplanmış embedding (pipeline testi / çift encode önleme)
-
-    model / index verilirse tekrar yükleme yapılmaz (upload_csv gibi toplu işlerde kullan).
-    """
     m = model or _get_model()
     idx = index if index is not None else _get_index()
     if vector is not None:
@@ -89,4 +76,3 @@ def save_to_cloud(
             }
         ]
     )
-    print(f"Başarıyla kaydedildi: {file_name}")

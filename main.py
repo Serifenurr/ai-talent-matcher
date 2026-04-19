@@ -18,7 +18,6 @@ load_dotenv()
 
 app = FastAPI(title="AI Talent Matcher API")
 
-# Allow CORS for local dev & Vercel
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,13 +26,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configuration
 CEO_PASSWORD = os.getenv("CEO_PASSWORD", "admin123")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-# Global instances
 model = None
 pinecone_index = None
 
@@ -43,22 +40,19 @@ def startup_event():
     if not PINECONE_API_KEY:
         raise RuntimeError("PINECONE_API_KEY is missing in environment.")
     
-    print("Loading SentenceTransformer model...")
     model = SentenceTransformer(MODEL_NAME)
     
-    print("Connecting to Pinecone...")
     pc = Pinecone(api_key=PINECONE_API_KEY)
     pinecone_index = pc.Index(INDEX_NAME)
 
 def authenticate_ceo(token: str = Depends(oauth2_scheme)):
-    # Very simple token verification - in production, use proper JWT!
-    if token not in [CEO_PASSWORD, "guest"]:
+    if token.strip() not in [CEO_PASSWORD.strip(), "guest"]:
          raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return token
+    return token.strip()
 
 class SearchRequest(BaseModel):
     query: str
@@ -84,40 +78,35 @@ class LoginRequest(BaseModel):
 
 @app.post("/token")
 def login(req: LoginRequest):
-    if req.password != CEO_PASSWORD:
+    if req.password.strip() != CEO_PASSWORD.strip():
         raise HTTPException(status_code=400, detail="Incorrect password")
-    # For a simple prototype, returning the password as a "token" itself.
-    return {"access_token": req.password, "token_type": "bearer"}
+    return {"access_token": req.password.strip(), "token_type": "bearer"}
 
 @app.post("/api/search", response_model=SearchResponse)
 def search_talents(req: SearchRequest, user: str = Depends(authenticate_ceo)):
     global model, pinecone_index
     
-    # 1. Parse CEO Query using LLM
     parsed = parse_ceo_query(req.query)
     target_query = parsed.get("search_query", req.query)
     min_years = parsed.get("min_years", 0.0)
     max_years = parsed.get("max_years")
     
-    # 2. Encode
     vector = model.encode(target_query).tolist()
     
-    # 3. Filter
     flt = build_filter(min_years if min_years > 0 else None, max_years)
     
-    q_kwargs: dict[str, Any] = {
-        "vector": vector,
-        "top_k": req.top_k,
-        "include_metadata": True,
-    }
-    if flt is not None:
-        q_kwargs["filter"] = flt
-        
-    # 4. Search Pinecone
+    print(f"DEBUG: Parsed Query: {target_query} | Min Years: {min_years} | Filter: {flt}")
+    
     try:
-        results = pinecone_index.query(**q_kwargs)
+        results = pinecone_index.query(
+            vector=vector,
+            top_k=req.top_k,
+            include_metadata=True,
+            filter=flt
+        )
         matches = getattr(results, "matches", []) or results.get("matches", [])
     except Exception as e:
+        print(f"DEBUG: Pinecone Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
         
     candidates = []
@@ -125,7 +114,6 @@ def search_talents(req: SearchRequest, user: str = Depends(authenticate_ceo)):
         score, meta, vid = _match_to_dict(match)
         vid = vid or "?"
         
-        # safely extract metadata
         skills = meta.get("top_skills") or []
         if not isinstance(skills, list):
             skills = [str(skills)]
@@ -177,7 +165,6 @@ async def upload_cv(files: List[UploadFile] = File(...), user: str = Depends(aut
             meta = extract_metadata(metin)
             vector = model.encode(metin).tolist()
             
-            # Rastgele ID ile eskinin üstüne yazılmasını (silinmesini) engelle:
             safe_name = file.filename.replace(" ", "_").lower().replace(".docx", "")
             vector_id = f"{safe_name}_{uuid.uuid4().hex[:6]}"
             
@@ -203,7 +190,6 @@ async def upload_cv(files: List[UploadFile] = File(...), user: str = Depends(aut
                 model=model,
                 index=pinecone_index,
             )
-            print(f"Pinecone Update Successful for: {file.filename}")
             uploaded_data.append({
                 "id": vector_id,
                 "filename": file.filename,

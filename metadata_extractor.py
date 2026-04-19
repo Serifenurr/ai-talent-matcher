@@ -1,7 +1,3 @@
-"""
-Thought Compression — Groq + LangChain ile CV metadata (JSON).
-GROQ_API_KEY .env içinde olmalıdır.
-"""
 from __future__ import annotations
 
 import os
@@ -46,7 +42,6 @@ CV Metni:
 {resume_text}
 """
 
-
 def _normalize_meta(raw: dict[str, Any] | None) -> dict[str, Any]:
     if not raw or not isinstance(raw, dict):
         return _empty_meta()
@@ -68,7 +63,6 @@ def _normalize_meta(raw: dict[str, Any] | None) -> dict[str, Any]:
         "summary": summary,
     }
 
-
 def _empty_meta() -> dict[str, Any]:
     return {
         "experience_years": 0,
@@ -77,14 +71,7 @@ def _empty_meta() -> dict[str, Any]:
         "summary": "",
     }
 
-
 def extract_metadata(resume_text: str) -> dict[str, Any]:
-    """
-    CV metninden JSON metadata döndürür.
-    Tecrübe yılı: LLM + CV metnindeki tarihler için deterministik ``estimate_years_experience``
-    birleştirilir (ikisinin max'ı), böylece filtre ``experience_years >= N`` güvenilir kalır.
-    GROQ_API_KEY yoksa yalnızca sezgisel yıl + boş diğer alanlar döner.
-    """
     from lio_hr_cv import estimate_years_experience
 
     text = (resume_text or "").strip()

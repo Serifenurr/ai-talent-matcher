@@ -16,7 +16,6 @@ export default function ShortlistView({ shortlist, setShortlist, goBack, isGuest
   const [compareMode, setCompareMode] = useState(false);
   const [selectedForCompare, setSelectedForCompare] = useState([]);
 
-  // Save notes and statuses effect
   React.useEffect(() => {
     localStorage.setItem('hr_notes', JSON.stringify(notes));
   }, [notes]);
@@ -151,7 +150,6 @@ export default function ShortlistView({ shortlist, setShortlist, goBack, isGuest
                 </div>
               </div>
 
-              {/* Status Tags */}
               <div style={{ marginBottom: '1rem' }}>
                 <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.3rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Tag size={12}/> Süreç Durumu:</div>
                 <select 
@@ -163,7 +161,6 @@ export default function ShortlistView({ shortlist, setShortlist, goBack, isGuest
                 </select>
               </div>
 
-              {/* Note Input */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', flex: 1 }}>
                 <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}><MessageSquare size={12}/> Özel Notlar:</div>
                 <textarea 
@@ -174,7 +171,6 @@ export default function ShortlistView({ shortlist, setShortlist, goBack, isGuest
                 />
               </div>
 
-              {/* Actions */}
               <div className="card-actions" style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
                 <button 
                   className="action-btn"

@@ -1,15 +1,8 @@
-"""
-Lio-HR-Agent — CEO doğal dil cümlesi veya doğrudan sorgu + Pinecone metadata filtresi.
-
-Örnekler:
-  python lio_hr_search.py --ceo "5 yıldan fazla tecrübeli bir Java uzmanı bul"
-  python lio_hr_search.py "python backend microservices" --min-years 3
-  python lio_hr_search.py   # interaktif: tek CEO cümlesi
-"""
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from typing import Any
 
@@ -20,12 +13,10 @@ from sentence_transformers import SentenceTransformer
 INDEX_NAME = "cv-index"
 MODEL_NAME = "all-MiniLM-L6-v2"
 
-
 def build_filter(
     min_years: float | None,
     max_years: float | None,
 ) -> dict[str, Any] | None:
-    """Pinecone metadata alanı: ``experience_years`` (konsol filtresi ile aynı)."""
     parts: list[dict[str, Any]] = []
     if min_years is not None and float(min_years) > 0:
         parts.append({"experience_years": {"$gte": float(min_years)}})
@@ -37,12 +28,7 @@ def build_filter(
         return parts[0]
     return {"$and": parts}
 
-
 def parse_ceo_query(ceo_text: str) -> dict[str, Any]:
-    """
-    CEO / yönetici cümlesinden vektör araması metni + yıl filtreleri çıkarır.
-    GROQ_API_KEY yoksa veya hata olursa tüm cümle aranır, min_years=0.
-    """
     text = (ceo_text or "").strip()
     out = {"search_query": text, "min_years": 0.0, "max_years": None}
     if not text:
@@ -59,18 +45,15 @@ def parse_ceo_query(ceo_text: str) -> dict[str, Any]:
 
         model_name = os.getenv("GROQ_MODEL", "llama3-70b-8192")
         tmpl = """
-Sen bir İK asistanısın. Yöneticinin tek cümlesinden şu alanları çıkar; yalnızca geçerli JSON döndür.
+Sen bir İK uzmanısın. Yöneticinin cümlesinden ADAY KRİTERLERİNİ (search_query) ve TECRÜBE SINIRLARINI çıkar.
+Yalnızca geçerli JSON döndür.
 
-- search_query: Pinecone semantik araması için kısa sorgu (rol, teknoloji, anahtar kelimeler; Türkçe veya İngilizce)
-- min_years: minimum toplam iş tecrübesi yılı (cümlede yoksa 0)
-- max_years: maksimum yıl (cümlede üst sınır yoksa null)
+- search_query: Pinecone semantik araması için kısa, öz yetenek sorgusu (örn: 'Python Backend Developer'). Filtre değerlerini (yıl vb.) bu sorgunun içine EKLEME.
+- min_years: Cümlede geçen 'en az', 'fazla', 'üstü' veya doğrudan yıl sayısını TAM SAYI olarak yaz. Yoksa 0.
+- max_years: Cümlede geçen üst sınır yılı. Yoksa null.
 
-Örnek yapı:
-{{
-    "search_query": "",
-    "min_years": 0,
-    "max_years": null
-}}
+Örnek: "10 yıl üstü Java uzmanı" -> {"search_query": "Java Developer", "min_years": 10, "max_years": null}
+Örnek: "5-8 yıl arası React" -> {"search_query": "React", "min_years": 5, "max_years": 8}
 
 Cümle: {ceo_text}
 """
@@ -78,32 +61,38 @@ Cümle: {ceo_text}
         prompt = PromptTemplate.from_template(tmpl)
         chain = prompt | llm | JsonOutputParser()
         raw = chain.invoke({"ceo_text": text[:4000]})
-        if not isinstance(raw, dict):
-            return out
-        sq = str(raw.get("search_query") or text).strip()
-        out["search_query"] = sq or text
-        try:
-            mn = float(raw.get("min_years") or 0)
-        except (TypeError, ValueError):
-            mn = 0.0
-        out["min_years"] = max(0.0, mn)
-        mx = raw.get("max_years")
-        if mx is not None and mx != "" and str(mx).lower() != "null":
+        if isinstance(raw, dict):
+            sq = str(raw.get("search_query") or text).strip()
+            out["search_query"] = sq or text
             try:
-                out["max_years"] = float(mx)
-            except (TypeError, ValueError):
-                out["max_years"] = None
-        return out
-    except Exception:
-        return {"search_query": text, "min_years": 0.0, "max_years": None}
+                mn = float(raw.get("min_years") or 0)
+                out["min_years"] = max(0.0, mn)
+            except:
+                pass
+            mx = raw.get("max_years")
+            if mx is not None and mx != "" and str(mx).lower() != "null":
+                try:
+                    out["max_years"] = float(mx)
+                except:
+                    pass
 
+    except:
+        pass
+
+    plus_match = re.search(r"(\d{1,2})\s*(\+|plus|yıl|year|sene|years)", text, re.IGNORECASE)
+    if plus_match and out["min_years"] == 0:
+        try:
+            out["min_years"] = float(plus_match.group(1))
+        except:
+            pass
+            
+    return out
 
 def _match_to_dict(m: Any) -> tuple[Any, dict[str, Any], str | None]:
     if isinstance(m, dict):
         return m.get("score"), (m.get("metadata") or {}), m.get("id")
     md = getattr(m, "metadata", None) or {}
     return getattr(m, "score", None), md, getattr(m, "id", None)
-
 
 def akilli_arama(
     kriter: str,
@@ -114,10 +103,6 @@ def akilli_arama(
     model: SentenceTransformer | None = None,
     index=None,
 ) -> None:
-    """
-    Kriteri vektöre çevirir; Pinecone'da semantik arama + ``experience_years`` metadata filtresi.
-    (Eski ``where=`` yerine SDK'nın ``filter=`` parametresi kullanılır.)
-    """
     load_dotenv()
     m = model or SentenceTransformer(MODEL_NAME)
     if index is not None:
@@ -143,10 +128,7 @@ def akilli_arama(
     matches = sonuclar.matches if hasattr(sonuclar, "matches") else (sonuclar.get("matches") or [])
 
     min_s = int(min_tecrube) if min_tecrube == int(min_tecrube) else min_tecrube
-    print(f"\n--- '{kriter}' kriterine uygun adaylar (min. {min_s} yıl tecrübe) ---\n")
-
     if not matches:
-        print("Eşleşme yok (filtre çok dar, indeks boş veya sorgu zayıf olabilir).")
         return
 
     for match in matches:
@@ -160,18 +142,10 @@ def akilli_arama(
         ozet = meta.get("summary") or meta.get("text_preview") or ""
 
         pct = round(float(score) * 100, 2) if isinstance(score, (int, float)) else score
-        print(f"Aday: {ad} | Uyumluluk: %{pct}")
-        print(f"Tecrübe (yıl): {yrs}")
-        print(f"Yetenekler: {', '.join(str(s) for s in skills[:12]) if skills else '-'}")
-        print(f"Özet: {ozet}")
-        print("-" * 30)
-
 
 def akilli_arama_ceo(ceo_cumlesi: str, top_k: int = 3, **kwargs: Any) -> None:
-    """CEO cümlesini ayrıştırıp ``akilli_arama`` çalıştırır."""
     load_dotenv()
     p = parse_ceo_query(ceo_cumlesi)
-    print(f"[Agent] Ayrıştırılan sorgu: {p['search_query']!r} | min_yıl={p['min_years']} | max_yıl={p.get('max_years')}")
     akilli_arama(
         p["search_query"],
         min_tecrube=float(p["min_years"]),
@@ -179,7 +153,6 @@ def akilli_arama_ceo(ceo_cumlesi: str, top_k: int = 3, **kwargs: Any) -> None:
         top_k=top_k,
         **kwargs,
     )
-
 
 def main() -> None:
     load_dotenv()
@@ -202,7 +175,6 @@ def main() -> None:
     if not api_key:
         raise SystemExit("PINECONE_API_KEY .env içinde tanımlı olmalı.")
 
-    print("Model yükleniyor...")
     model = SentenceTransformer(MODEL_NAME)
     pc = Pinecone(api_key=api_key)
     index = pc.Index(INDEX_NAME)
@@ -223,7 +195,6 @@ def main() -> None:
         )
         return
 
-    # İnteraktif: tek CEO cümlesi
     if sys.stdin.isatty():
         arama_metni = input("Hangi profilde aday arıyorsunuz? (CEO cümlesi): ").strip()
         if not arama_metni:
@@ -238,7 +209,6 @@ def main() -> None:
         raise SystemExit(
             "Argüman verin: python lio_hr_search.py --ceo \"...\" veya python lio_hr_search.py \"sorgu\" --min-years 3"
         )
-
 
 if __name__ == "__main__":
     main()
