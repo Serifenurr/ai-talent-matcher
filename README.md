@@ -90,4 +90,4 @@ Sistem, **"Midnight Intelligence"** adı verilen özel bir tasarım diliyle sunu
 
 ---
 
-**Developed with ❤️ by Şerife Nur Yılmaz**
+
